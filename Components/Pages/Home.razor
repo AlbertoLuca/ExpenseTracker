@@ -1,0 +1,532 @@
+﻿@using ExpenseTracker.Data
+@using ExpenseTracker.Models
+@using ExpenseTracker.Services
+@inject NavigationManager NavManager
+
+@page "/"
+@rendermode InteractiveServer
+
+<head>
+    <style>
+            .expense-chart-card {
+                background: #ffffff;
+                border-radius: 18px;
+                padding: 20px 24px;
+                box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+            }
+
+            .expense-chart-header {
+                margin-bottom: 14px;
+            }
+
+            .expense-chart-title {
+                margin: 0;
+                font-size: 1.35rem;
+                font-weight: 700;
+                color: #0f172a;
+                letter-spacing: 0.3px;
+            }
+
+            .expense-chart-subtitle {
+                display: inline-block;
+                margin-top: 4px;
+                font-size: 0.95rem;
+                color: #64748b;
+            }
+    </style>
+</head>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+
+    <div>
+        <button class="btn btn-secondary me-2" @onclick="ShowAll">Tutte</button>
+        <button class="btn btn-success me-2" @onclick="ShowIncome">Entrate</button>
+        <button class="btn btn-danger" @onclick="ShowExpense">Uscite</button>
+    </div>
+
+    <div>
+        <button class="btn btn-outline-success me-2" @onclick="OpenAddIncomeModal">Aggiungi entrata</button>
+        <button class="btn btn-outline-danger" @onclick="OpenAddExpenseModal">Aggiungi uscita</button>
+    </div>
+
+</div>
+    <br />
+    <br />
+
+    <div class="mb-3">
+        <label class="form-label">Cerca per categoria</label>
+        <InputText class="form-control" style="width: 30%" @bind-Value="searchCategory" placeholder="Es. Food" />
+    </div>
+    <div class="row mb-3 align-items-end">
+
+        <div class="col">
+            <label class="form-label">Da</label>
+            <InputDate class="form-control" @bind-Value="startDate" />
+        </div>
+
+        <div class="col">
+            <label class="form-label">A</label>
+            <InputDate class="form-control" @bind-Value="endDate" />
+        </div>
+        <div class="col-auto" style="justify-content: center">
+        
+            <button class="btn btn-secondary" @onclick="ClearFilters">
+                Cancella filtri
+            </button>
+        </div>
+    </div>
+
+    <table class="table table-light table mt-3">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Descrizione</th>
+                <th>Importo</th>
+                <th>Data</th>
+                <th>Categoria</th>
+                <th>Rimuovi</th>
+                <th>Modifica</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var item in transactions
+                    .Where(x =>
+                        (string.IsNullOrWhiteSpace(searchCategory) ||
+                         x.Category.Contains(searchCategory, StringComparison.OrdinalIgnoreCase))
+                        &&
+                        (!startDate.HasValue || x.Date.Date >= startDate.Value.Date)
+                        &&
+                        (!endDate.HasValue || x.Date.Date <= endDate.Value.Date)
+                            )
+                    .OrderByDescending(x => x.Date))
+
+            {
+                if ((item.IsIncome && income) || (!item.IsIncome && expense))
+                {
+                    <tr>
+                        <td>@item.Id</td>
+                        <td>@item.Title</td>
+
+                        @if (item.IsIncome)
+                        {
+                            <td class="text-success">+ @item.Amount.ToString("N2") €</td>
+                        }
+                        else
+                        {
+                            <td class="text-danger">- @item.Amount €</td>
+                        }
+                        <td>@item.Date.ToShortDateString()</td>
+                        <td>@item.Category</td>
+                        <td>
+                            <button class="btn btn-danger btn-sm" @onclick="() => ConfirmDelete(item.Id)">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                        <td>
+                            <button class="btn btn-light btn-sm" @onclick="() => OpenEditModal(item)">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                        </td>
+
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+<div class="row mt-4 align-items-center">
+
+    <!-- SINISTRA: Grafico -->
+    <div class="col-md-6">
+        @if (transactions.Any(x => !x.IsIncome))
+        {
+            <div class="expense-chart-card">
+                <div class="expense-chart-header">
+                    <h5 class="expense-chart-title">Grafico uscite</h5>
+                    <span class="expense-chart-subtitle">Distribuzione per categoria</span>
+                </div>
+
+                <div style="max-width: 500px; height: 300px;">
+                    <canvas id="categoryChart"></canvas>
+                </div>
+            </div>
+        }
+        else
+        {
+            <p class="text-muted">Nessuna uscita da mostrare nel grafico.</p>
+        }
+    </div>
+
+    <!-- DESTRA: Card -->
+    <div class="col-md-6">
+        <div class="row g-3">
+
+            <div class="col-12 col-md-4">
+                <div class="card shadow-sm h-100 border-0 text-center">
+                    <div class="card-body">
+                        <div class="mb-2 text-primary">
+                            <i class="bi bi-wallet2 fs-2"></i>
+                        </div>
+                        <h6 class="card-subtitle mb-2 text-muted">Saldo</h6>
+                        <h4 class="fw-bold text-primary mb-0 text-nowrap">
+                            @rimanente.ToString("N2") €
+                        </h4>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12 col-md-4">
+                <div class="card shadow-sm h-100 border-0 text-center">
+                    <div class="card-body">
+                        <div class="mb-2 text-success">
+                            <i class="bi bi-arrow-up-circle fs-2"></i>
+                        </div>
+                        <h6 class="card-subtitle mb-2 text-muted">Entrate</h6>
+                        <h4 class="fw-bold text-success mb-0 text-nowrap">
+                            @entrate.ToString("N2") €
+                        </h4>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12 col-md-4">
+                <div class="card shadow-sm h-100 border-0 text-center">
+                    <div class="card-body">
+                        <div class="mb-2 text-danger">
+                            <i class="bi bi-arrow-down-circle fs-2"></i>
+                        </div>
+                        <h6 class="card-subtitle mb-2 text-muted">Uscite</h6>
+                        <h4 class="fw-bold text-danger mb-0 text-nowrap">
+                            @uscite.ToString("N2") €
+                        </h4>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+</div>
+    @if (showEditModal)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog">
+                <div class="modal-content">
+
+                    <div class="modal-header">
+                        <h5 class="modal-title">Aggiungi un entrata</h5>
+                        <button type="button" class="btn-close" @onclick="CloseEditModal"></button>
+                    </div>
+
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Descrizione</label>
+                            <input class="form-control" @bind="editTransaction.Title" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Importo</label>
+                            <input type="number" class="form-control" @bind="editTransaction.Amount" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Categoria</label>
+                            <input class="form-control" @bind="editTransaction.Category" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Data</label>
+                            <InputDate class="form-control" @bind-Value="editTransaction.Date" />
+                        </div>
+
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" @bind="editTransaction.IsIncome" id="isIncomeCheck" />
+                            <label class="form-check-label" for="isIncomeCheck">
+                                È un'entrata
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" @onclick="CloseEditModal">Annulla</button>
+                        <button class="btn btn-primary" @onclick="SaveEdit">Salva</button>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    }
+
+@if (showAddIncomeModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+
+                <div class="modal-header">
+                    <h5 class="modal-title">Aggiungi un entrata</h5>
+                    <button type="button" class="btn-close" @onclick="CloseAddIncomeModal"></button>
+                </div>
+
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Descrizione</label>
+                        <input class="form-control" @bind="incomeTransaction.Title" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Importo</label>
+                        <input type="number" class="form-control" @bind="incomeTransaction.Amount" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Categoria</label>
+                        <input class="form-control" @bind="incomeTransaction.Category" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Data</label>
+                        <InputDate class="form-control" @bind-Value="incomeTransaction.Date" />
+                    </div>
+
+                </div>
+
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseAddIncomeModal">Annulla</button>
+                    <button class="btn btn-primary" @onclick="SaveIncome">Salva</button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+}
+
+@if (showAddExpenseModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+
+                <div class="modal-header">
+                    <h5 class="modal-title">Aggiungi un uscita</h5>
+                    <button type="button" class="btn-close" @onclick="CloseAddExpenseModal"></button>
+                </div>
+
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Descrizione</label>
+                        <input class="form-control" @bind="expenseTransaction.Title" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Importo</label>
+                        <input type="number" class="form-control" @bind="expenseTransaction.Amount" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Categoria</label>
+                        <input class="form-control" @bind="expenseTransaction.Category" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Data</label>
+                        <InputDate class="form-control" @bind-Value="expenseTransaction.Date" />
+                    </div>
+
+                </div>
+
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseAddExpenseModal">Annulla</button>
+                    <button class="btn btn-primary" @onclick="SaveExpense">Salva</button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+}
+    <br />
+
+@code {
+    [Inject] IJSRuntime JS { get; set; }
+    [Inject] TransactionService service { get; set; }
+
+    List<TransactionItem> transactions = new();
+
+    public TransactionItem incomeTransaction = new();
+    public TransactionItem expenseTransaction = new();
+    TransactionItem editTransaction = new();    
+
+    string searchCategory = "";
+    DateTime? startDate;
+    DateTime? endDate;
+    bool income = true;
+    bool expense = true;
+
+    decimal entrate;
+    decimal uscite;
+    decimal rimanente;
+
+    bool showEditModal = false;
+    bool showAddIncomeModal = false;
+    bool showAddExpenseModal = false;
+
+    protected override void OnInitialized()
+    {
+        Aggiorna();
+    }
+
+    void ShowAll()
+    {
+        income = true;
+        expense = true;
+    }
+
+    void ShowIncome()
+    {
+        income = true;
+        expense = false;
+    }
+
+    void ShowExpense()
+    {
+        income = false;
+        expense = true;
+    }
+
+    void ClearFilters()
+    {
+        startDate = null;
+        endDate = null;
+        searchCategory = "";
+    }
+
+    async Task LoadChart()
+    {
+        var expenses = transactions
+            .Where(x => !x.IsIncome)
+            .GroupBy(x => x.Category)
+            .Select(g => new
+            {
+                Category = g.Key,
+                Total = g.Sum(x => x.Amount)
+            })
+            .ToList();
+
+        if (!expenses.Any())
+            return;
+
+        var labels = expenses.Select(x => x.Category).ToArray();
+        var values = expenses.Select(x => (double)x.Total).ToArray();
+
+        await JS.InvokeVoidAsync("createCategoryChart", labels, values);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadChart();
+        }
+    }
+
+    public void Aggiorna()
+    {
+        transactions = service.GetAll();
+
+        entrate = @service
+           .GetAll()
+           .Where(x => x.IsIncome)
+           .Sum(x => x.Amount);
+        uscite = @service
+         .GetAll()
+         .Where(x => !x.IsIncome)
+         .Sum(x => x.Amount);
+        rimanente = entrate - uscite;
+    }
+
+    public void OpenAddIncomeModal()
+    {
+        showAddIncomeModal = true;
+    }
+
+    public void OpenAddExpenseModal()
+    {
+        showAddExpenseModal = true;
+    }
+
+    public void OpenEditModal(TransactionItem item)
+    {
+        editTransaction = new TransactionItem
+        {
+            Id = item.Id,
+            Title = item.Title,
+            Amount = item.Amount,
+            Category = item.Category,
+            IsIncome = item.IsIncome,
+            Date = item.Date
+        };
+
+        showEditModal = true;
+    }
+
+    public async Task SaveIncome()
+    {
+        incomeTransaction.IsIncome = true;
+        service.Add(incomeTransaction);
+
+        incomeTransaction = new TransactionItem();
+        Aggiorna();
+        CloseAddIncomeModal();
+    }
+    public async Task SaveExpense()
+    {
+        expenseTransaction.IsIncome = false;
+        service.Add(expenseTransaction);
+
+        expenseTransaction = new TransactionItem();
+        Aggiorna();
+        await LoadChart();
+        CloseAddExpenseModal();
+    }
+
+    public async Task SaveEdit()
+    {
+        service.Update(editTransaction);
+        Aggiorna();
+        await LoadChart();
+        CloseEditModal();
+    }
+
+    public void CloseAddIncomeModal()
+    {
+        showAddIncomeModal = false;
+        incomeTransaction = new TransactionItem();
+    }
+
+    public void CloseAddExpenseModal()
+    {
+        showAddExpenseModal = false;
+        expenseTransaction = new TransactionItem();
+    }
+    public void CloseEditModal()
+    {
+        showEditModal = false;
+        editTransaction = new TransactionItem();
+    }
+
+    async Task ConfirmDelete(int id)
+    {
+        bool conferma = await JS.InvokeAsync<bool>("confirm", "Sei sicuro di voler eliminare la transazione ?");
+
+        if(conferma)
+        {
+            await DeleteTransaction(id);
+        }
+    }
+    public async Task DeleteTransaction(int id)
+    {
+        service.Remove(id);
+        Aggiorna();
+        await LoadChart();
+    }
+    
+}
